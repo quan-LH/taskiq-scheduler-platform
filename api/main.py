@@ -1,39 +1,101 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 from broker import broker
-from tasks.basic import add
+from tasks.basic import add, multiply, sync_task, fetch_url, process_data
 
-# 定义生命周期管理器
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 启动时的初始化逻辑（替代 @app.on_event("startup")）
     await broker.startup()
     print("[API] Broker 已启动")
-    
-    yield  # 应用运行期间会停在这里
-    
-    # 关闭时的清理逻辑（替代 @app.on_event("shutdown")）
+    yield
     await broker.shutdown()
     print("[API] Broker 已关闭")
 
-# 将 lifespan 参数传给 FastAPI
-app = FastAPI(title="TaskIQ调度平台", lifespan=lifespan)
 
-class AddRequest(BaseModel):
+app = FastAPI(title="TaskIQ 调度平台", lifespan=lifespan)
+
+
+class TaskRequest(BaseModel):
     x: int
     y: int
 
+
+class MessageRequest(BaseModel):
+    message: str
+
+
+class UrlRequest(BaseModel):
+    url: str
+
+
+class DataRequest(BaseModel):
+    data: list[int]
+
+
 @app.post("/tasks/add")
-async def submit_add(req: AddRequest):
+async def submit_add(req: TaskRequest):
     job = await add.kiq(req.x, req.y)
-    return {"task_id": job.task_id}
+    return {"task_id": job.task_id, "status": "submitted"}
+
+
+@app.post("/tasks/multiply")
+async def submit_multiply(req: TaskRequest):
+    job = await multiply.kiq(req.x, req.y)
+    return {"task_id": job.task_id, "status": "submitted"}
+
+
+@app.post("/tasks/sync")
+async def submit_sync(req: MessageRequest):
+    job = await sync_task.kiq(req.message)
+    return {"task_id": job.task_id, "status": "submitted"}
+
+
+@app.post("/tasks/fetch")
+async def submit_fetch(req: UrlRequest):
+    job = await fetch_url.kiq(req.url)
+    return {"task_id": job.task_id, "status": "submitted"}
+
+
+@app.post("/tasks/process")
+async def submit_process(req: DataRequest):
+    job = await process_data.kiq(req.data)
+    return {"task_id": job.task_id, "status": "submitted"}
+
 
 @app.get("/tasks/{task_id}")
 async def get_result(task_id: str):
-    result = await broker.result_backend.get_result(task_id)
-    return {"task_id": task_id, "result": result}
+    try:
+        result = await broker.result_backend.get_result(task_id)
+        if result is None:
+            return {"task_id": task_id, "status": "pending", "result": None}
+        return {
+            "task_id": task_id,
+            "is_err": result.is_err,
+            "result": result.return_value,
+            "error": result.error,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/tasks/{task_id}/status")
+async def get_status(task_id: str):
+    try:
+        result = await broker.result_backend.get_result(task_id)
+        if result is None:
+            return {"task_id": task_id, "status": "pending"}
+        return {"task_id": task_id, "is_err": result.is_err}
+    except Exception:
+        return {"task_id": task_id, "status": "pending"}
+
 
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
+
+
+@app.get("/")
+async def root():
+    return {"name": "TaskIQ 调度平台", "version": "1.0.0", "docs": "/docs"}

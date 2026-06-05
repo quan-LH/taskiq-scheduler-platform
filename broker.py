@@ -1,8 +1,4 @@
-from taskiq_redis import RedisAsyncResultBackend, ListQueueBroker
+from taskiq import InMemoryBroker
 
-REDIS_URL = "redis://localhost:6379"
-
-broker = ListQueueBroker(
-    REDIS_URL + "/0",
-    result_backend=RedisAsyncResultBackend(REDIS_URL + "/1"),
-)
+# 内存模式 Broker - 开发测试用，无需 Redis/PostgreSQL
+broker = InMemoryBroker()

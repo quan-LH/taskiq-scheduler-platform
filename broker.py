@@ -1,4 +1,2 @@
-from taskiq import InMemoryBroker
-
-# 内存模式 Broker - 开发测试用，无需 Redis/PostgreSQL
-broker = InMemoryBroker()
+# 重新导出 broker_config 中的 broker，保持向后兼容
+from broker_config import broker

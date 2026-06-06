@@ -1,7 +1,7 @@
 """
 邮件任务模块 - 实现定时邮件发送功能
 """
-from broker import broker
+from broker_config import broker
 import asyncio
 import smtplib
 from email.mime.text import MIMEText

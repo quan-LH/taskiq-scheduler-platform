@@ -1,9 +1,7 @@
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, EmailStr  # EmailStr 用于邮箱格式验证
+from pydantic import BaseModel, EmailStr
 from contextlib import asynccontextmanager
-from broker import broker
-from tasks.basic import add, multiply, sync_task, fetch_url, process_data
-from tasks.email_tasks import send_email, send_batch_emails  # 邮件任务（新增）
+from broker_config import broker
 
 
 @asynccontextmanager
@@ -17,6 +15,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="TaskIQ 调度平台", lifespan=lifespan)
 
+
+# ============ 基础任务 API ============
 
 class TaskRequest(BaseModel):
     x: int
@@ -37,33 +37,103 @@ class DataRequest(BaseModel):
 
 @app.post("/tasks/add")
 async def submit_add(req: TaskRequest):
+    from broker_config import add
     job = await add.kiq(req.x, req.y)
     return {"task_id": job.task_id, "status": "submitted"}
 
 
 @app.post("/tasks/multiply")
 async def submit_multiply(req: TaskRequest):
+    from broker_config import multiply
     job = await multiply.kiq(req.x, req.y)
     return {"task_id": job.task_id, "status": "submitted"}
 
 
 @app.post("/tasks/sync")
 async def submit_sync(req: MessageRequest):
+    from broker_config import sync_task
     job = await sync_task.kiq(req.message)
     return {"task_id": job.task_id, "status": "submitted"}
 
 
 @app.post("/tasks/fetch")
 async def submit_fetch(req: UrlRequest):
+    from broker_config import fetch_url
     job = await fetch_url.kiq(req.url)
     return {"task_id": job.task_id, "status": "submitted"}
 
 
 @app.post("/tasks/process")
 async def submit_process(req: DataRequest):
+    from broker_config import process_data
     job = await process_data.kiq(req.data)
     return {"task_id": job.task_id, "status": "submitted"}
 
+
+# ============ 邮件 API ============
+
+class EmailRequest(BaseModel):
+    to_email: EmailStr
+    subject: str
+    body: str
+    body_type: str = "plain"
+
+
+class BatchEmailRequest(BaseModel):
+    recipients: list[EmailStr]
+    subject: str
+    body: str
+
+
+@app.post("/tasks/send_email", summary="发送单封邮件")
+async def submit_email(req: EmailRequest):
+    from broker_config import send_email
+    job = await send_email.kiq(req.to_email, req.subject, req.body, req.body_type)
+    return {"task_id": job.task_id, "status": "submitted"}
+
+
+@app.post("/tasks/send_batch_emails", summary="批量发送邮件")
+async def submit_batch_emails(req: BatchEmailRequest):
+    from broker_config import send_batch_emails
+    job = await send_batch_emails.kiq(req.recipients, req.subject, req.body)
+    return {"task_id": job.task_id, "status": "submitted", "count": len(req.recipients)}
+
+
+# ============ 重试测试 API ============
+
+@app.post("/tasks/flaky", summary="模拟不稳定任务")
+async def submit_flaky():
+    from broker_config import flaky_task
+    job = await flaky_task.kiq()
+    return {"task_id": job.task_id, "status": "submitted"}
+
+
+@app.post("/tasks/always_fail", summary="永远失败的任务")
+async def submit_always_fail():
+    from broker_config import always_fail_task
+    job = await always_fail_task.kiq()
+    return {"task_id": job.task_id, "status": "submitted"}
+
+
+@app.post("/tasks/retry_counter", summary="重试计数器")
+async def submit_retry_counter():
+    from broker_config import retry_counter
+    job = await retry_counter.kiq()
+    return {"task_id": job.task_id, "status": "submitted"}
+
+
+class DelayedTaskRequest(BaseModel):
+    delay: float = 2.0
+
+
+@app.post("/tasks/delayed", summary="延迟成功任务")
+async def submit_delayed(req: DelayedTaskRequest):
+    from broker_config import delayed_success
+    job = await delayed_success.kiq(req.delay)
+    return {"task_id": job.task_id, "status": "submitted"}
+
+
+# ============ 通用 API ============
 
 @app.get("/tasks/{task_id}")
 async def get_result(task_id: str):
@@ -100,56 +170,3 @@ async def health():
 @app.get("/")
 async def root():
     return {"name": "TaskIQ 调度平台", "version": "1.0.0", "docs": "/docs"}
-
-
-# ============ 邮件发送 API（新增）============
-
-class EmailRequest(BaseModel):
-    """单封邮件请求模型"""
-    to_email: EmailStr          # 收件人邮箱（自动验证格式）
-    subject: str                # 邮件主题
-    body: str                   # 邮件正文
-    body_type: str = "plain"    # 正文类型: plain 或 html
-
-
-class BatchEmailRequest(BaseModel):
-    """批量邮件请求模型"""
-    recipients: list[EmailStr]  # 收件人列表（自动验证格式）
-    subject: str                # 邮件主题
-    body: str                   # 邮件正文
-
-
-@app.post("/tasks/send_email", summary="发送单封邮件")
-async def submit_email(req: EmailRequest):
-    """
-    提交发送单封邮件任务
-
-    - to_email: 收件人邮箱地址
-    - subject: 邮件主题
-    - body: 邮件正文内容
-    - body_type: plain(普通文本) 或 html(网页格式)
-    """
-    job = await send_email.kiq(
-        to_email=req.to_email,
-        subject=req.subject,
-        body=req.body,
-        body_type=req.body_type
-    )
-    return {"task_id": job.task_id, "status": "submitted"}
-
-
-@app.post("/tasks/send_batch_emails", summary="批量发送邮件")
-async def submit_batch_emails(req: BatchEmailRequest):
-    """
-    提交批量发送邮件任务
-
-    - recipients: 收件人邮箱列表
-    - subject: 邮件主题（所有收件人收到相同主题）
-    - body: 邮件正文
-    """
-    job = await send_batch_emails.kiq(
-        recipients=req.recipients,
-        subject=req.subject,
-        body=req.body
-    )
-    return {"task_id": job.task_id, "status": "submitted", "count": len(req.recipients)}

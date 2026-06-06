@@ -1,4 +1,4 @@
-from broker import broker
+from broker_config import broker
 import asyncio
 import time
 

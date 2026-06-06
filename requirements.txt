@@ -5,3 +5,7 @@ taskiq==0.5.0
 fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
 pydantic>=2.0.0
+email-validator>=2.0.0  # 邮箱格式验证（新增）
+
+# Email（新增）
+aiosmtplib>=3.0.0  # 异步 SMTP 发送邮件

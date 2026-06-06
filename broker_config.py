@@ -137,3 +137,24 @@ async def delayed_success(delay: float = 2.0) -> dict:
     """延迟成功任务"""
     await asyncio.sleep(delay)
     return {"status": "success", "delay": delay}
+
+
+# ============ 超时测试任务 ============
+
+@broker.task(timeout=3)
+async def long_running_task(duration: float = 5.0) -> dict:
+    """长时间运行任务 - 超时测试
+    默认运行5秒，但超时设置3秒，应该超时失败
+    """
+    print(f"[Worker] 开始长时间任务，预计运行 {duration} 秒")
+    await asyncio.sleep(duration)
+    return {"status": "success", "duration": duration}
+
+
+@broker.task(timeout=10)
+async def normal_task() -> dict:
+    """正常任务 - 不会被超时
+    运行时间小于超时限制
+    """
+    await asyncio.sleep(2)
+    return {"status": "success", "message": "正常完成任务"}

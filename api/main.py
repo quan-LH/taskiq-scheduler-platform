@@ -133,6 +133,34 @@ async def submit_delayed(req: DelayedTaskRequest):
     return {"task_id": job.task_id, "status": "submitted"}
 
 
+# ============ 超时测试 API ============
+
+class LongRunningRequest(BaseModel):
+    duration: float = 5.0
+
+
+@app.post("/tasks/long_running", summary="长时间任务（测试超时）")
+async def submit_long_running(req: LongRunningRequest):
+    """
+    提交长时间运行任务
+    - 默认运行5秒，超时设置3秒，会超时失败
+    """
+    from broker_config import long_running_task
+    job = await long_running_task.kiq(req.duration)
+    return {"task_id": job.task_id, "status": "submitted"}
+
+
+@app.post("/tasks/normal", summary="正常任务（不会超时）")
+async def submit_normal():
+    """
+    提交正常任务
+    - 运行2秒，超时设置10秒，不会超时
+    """
+    from broker_config import normal_task
+    job = await normal_task.kiq()
+    return {"task_id": job.task_id, "status": "submitted"}
+
+
 # ============ 通用 API ============
 
 @app.get("/tasks/{task_id}")

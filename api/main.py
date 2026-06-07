@@ -161,6 +161,40 @@ async def submit_normal():
     return {"task_id": job.task_id, "status": "submitted"}
 
 
+# ============ 分布式锁测试 API ============
+
+class LockedTaskRequest(BaseModel):
+    task_id: str
+
+
+@app.post("/tasks/locked", summary="带锁任务（防重复执行）")
+async def submit_locked_task(req: LockedTaskRequest):
+    """
+    提交带分布式锁的任务
+    - 相同 task_id 的任务同一时间只能执行一个
+    - 运行5秒，测试并发控制
+    """
+    from broker_config import locked_task
+    job = await locked_task.kiq(req.task_id)
+    return {"task_id": job.task_id, "status": "submitted"}
+
+
+class UnlockedTaskRequest(BaseModel):
+    message: str
+
+
+@app.post("/tasks/unlocked", summary="无锁任务（可并发）")
+async def submit_unlocked_task(req: UnlockedTaskRequest):
+    """
+    提交无锁任务
+    - 可以并发执行，无并发控制
+    - 运行2秒
+    """
+    from broker_config import unlocked_task
+    job = await unlocked_task.kiq(req.message)
+    return {"task_id": job.task_id, "status": "submitted"}
+
+
 # ============ 通用 API ============
 
 @app.get("/tasks/{task_id}")

@@ -7,8 +7,66 @@ import asyncio
 import time
 import random
 import smtplib
+import hashlib
+import json
+import redis
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+
+# ============ Redis 客户端（用于分布式锁） ============
+redis_client = redis.Redis(host="localhost", port=6379, decode_responses=True)
+
+# ============ 分布式锁工具 ============
+
+class DistributedLock:
+    """基于 Redis 的分布式锁"""
+
+    def __init__(self, key: str, expire: float = 30.0):
+        self.key = f"lock:{key}"
+        self.expire = expire
+        self.lock_id = None
+
+    def acquire(self) -> bool:
+        """尝试获取锁"""
+        self.lock_id = f"{time.time()}:{random.random()}"
+        # SETNX + 过期时间
+        acquired = redis_client.set(self.key, self.lock_id, nx=True, ex=int(self.expire))
+        return bool(acquired)
+
+    def release(self) -> bool:
+        """释放锁"""
+        if self.lock_id is None:
+            return False
+        # 使用 Lua 脚本保证原子性：只有持有锁才能释放
+        script = """
+        if redis.call("get", KEYS[1]) == ARGV[1] then
+            return redis.call("del", KEYS[1])
+        else
+            return 0
+        end
+        """
+        try:
+            result = redis_client.eval(script, 1, self.key, self.lock_id)
+            return bool(result)
+        except Exception:
+            return False
+
+    async def __aenter__(self):
+        """异步上下文管理器入口"""
+        while not self.acquire():
+            await asyncio.sleep(0.1)
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """异步上下文管理器出口"""
+        self.release()
+
+
+def get_task_lock_key(task_name: str, *args, **kwargs) -> str:
+    """生成任务锁的唯一键"""
+    task_id = f"{task_name}:{json.dumps((args, kwargs), sort_keys=True)}"
+    return hashlib.md5(task_id.encode()).hexdigest()
+
 
 # ============ 邮件配置 ============
 SMTP_SERVER = "smtp.qq.com"
@@ -158,3 +216,41 @@ async def normal_task() -> dict:
     """
     await asyncio.sleep(2)
     return {"status": "success", "message": "正常完成任务"}
+
+
+# ============ 分布式锁测试任务 ============
+
+@broker.task
+async def locked_task(task_id: str) -> dict:
+    """
+    带分布式锁的任务 - 防止重复执行
+    相同 task_id 的任务在同一时间只能有一个在执行
+    """
+    lock_key = get_task_lock_key("locked_task", task_id)
+    lock = DistributedLock(lock_key, expire=30.0)
+
+    # 尝试获取锁，失败则跳过
+    if not lock.acquire():
+        print(f"[Worker] 任务 {task_id} 获取锁失败，跳过")
+        return {"status": "skipped", "message": "任务正在执行中，跳过"}
+
+    try:
+        print(f"[Worker] 开始执行锁任务: {task_id}")
+        await asyncio.sleep(5)  # 模拟耗时任务
+        print(f"[Worker] 完成任务: {task_id}")
+    finally:
+        lock.release()
+
+    return {"status": "success", "task_id": task_id}
+
+
+@broker.task
+async def unlocked_task(message: str) -> dict:
+    """
+    无锁任务 - 可以并发执行
+    每次调用都会执行，不做并发控制
+    """
+    print(f"[Worker] 开始无锁任务: {message}")
+    await asyncio.sleep(2)
+    print(f"[Worker] 完成无锁任务: {message}")
+    return {"status": "success", "message": message}
